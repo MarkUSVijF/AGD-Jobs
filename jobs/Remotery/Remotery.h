@@ -1,4 +1,5 @@
 
+#pragma warning(push, 0)        
 
 /*
 Copyright 2014-2018 Celtoys Ltd
@@ -668,3 +669,5 @@ RMT_API void _rmt_UnbindMetal();
 
 
 #endif
+
+#pragma warning(pop)

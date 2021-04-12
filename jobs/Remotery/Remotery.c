@@ -14,6 +14,9 @@
 // limitations under the License.
 //
 
+#pragma warning(push, 0)        
+
+
 /*
 @Contents:
 
@@ -8778,3 +8781,5 @@ RMT_API void _rmt_EndMetalSample(void)
 #endif // RMT_USE_METAL
 
 #endif // RMT_ENABLED
+
+#pragma warning(pop)
