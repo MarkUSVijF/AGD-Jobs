@@ -118,59 +118,68 @@ documented just below this comment.
 
 // Platform identification
 #if defined(_WINDOWS) || defined(_WIN32)
-    #define RMT_PLATFORM_WINDOWS
-#elif defined(__linux__) || defined(__FreeBSD__)
-    #define RMT_PLATFORM_LINUX
-    #define RMT_PLATFORM_POSIX
+#define RMT_PLATFORM_WINDOWS
+#elif defined(__linux__) || defined(__FreeBSD__) || defined(__OpenBSD__)
+#define RMT_PLATFORM_LINUX
+#define RMT_PLATFORM_POSIX
 #elif defined(__APPLE__)
-    #define RMT_PLATFORM_MACOS
-    #define RMT_PLATFORM_POSIX
+#define RMT_PLATFORM_MACOS
+#define RMT_PLATFORM_POSIX
+#endif
+
+// Architecture identification
+#ifdef RMT_PLATFORM_WINDOWS
+#ifdef _M_AMD64
+#define RMT_ARCH_64BIT
+#else
+#define RMT_ARCH_32BIT
+#endif
 #endif
 
 #ifdef RMT_DLL
-    #if defined (RMT_PLATFORM_WINDOWS)
-        #if defined (RMT_IMPL)
-            #define RMT_API __declspec(dllexport)
-        #else
-            #define RMT_API __declspec(dllimport)
-        #endif
-    #elif defined (RMT_PLATFORM_POSIX)
-        #if defined (RMT_IMPL)
-            #define RMT_API __attribute__((visibility("default")))
-        #else
-            #define RMT_API
-        #endif
-    #endif
+#if defined (RMT_PLATFORM_WINDOWS)
+#if defined (RMT_IMPL)
+#define RMT_API __declspec(dllexport)
 #else
-    #define RMT_API
+#define RMT_API __declspec(dllimport)
+#endif
+#elif defined (RMT_PLATFORM_POSIX)
+#if defined (RMT_IMPL)
+#define RMT_API __attribute__((visibility("default")))
+#else
+#define RMT_API
+#endif
+#endif
+#else
+#define RMT_API
 #endif
 
 // Allows macros to be written that can work around the inability to do: #define(x) #ifdef x
 // with the C preprocessor.
 #if RMT_ENABLED
-    #define IFDEF_RMT_ENABLED(t, f) t
+#define IFDEF_RMT_ENABLED(t, f) t
 #else
-    #define IFDEF_RMT_ENABLED(t, f) f
+#define IFDEF_RMT_ENABLED(t, f) f
 #endif
 #if RMT_ENABLED && RMT_USE_CUDA
-    #define IFDEF_RMT_USE_CUDA(t, f) t
+#define IFDEF_RMT_USE_CUDA(t, f) t
 #else
-    #define IFDEF_RMT_USE_CUDA(t, f) f
+#define IFDEF_RMT_USE_CUDA(t, f) f
 #endif
 #if RMT_ENABLED && RMT_USE_D3D11
-    #define IFDEF_RMT_USE_D3D11(t, f) t
+#define IFDEF_RMT_USE_D3D11(t, f) t
 #else
-    #define IFDEF_RMT_USE_D3D11(t, f) f
+#define IFDEF_RMT_USE_D3D11(t, f) f
 #endif
 #if RMT_ENABLED && RMT_USE_OPENGL
-    #define IFDEF_RMT_USE_OPENGL(t, f) t
+#define IFDEF_RMT_USE_OPENGL(t, f) t
 #else
-    #define IFDEF_RMT_USE_OPENGL(t, f) f
+#define IFDEF_RMT_USE_OPENGL(t, f) f
 #endif
 #if RMT_ENABLED && RMT_USE_METAL
-    #define IFDEF_RMT_USE_METAL(t, f) t
+#define IFDEF_RMT_USE_METAL(t, f) t
 #else
-    #define IFDEF_RMT_USE_METAL(t, f) f
+#define IFDEF_RMT_USE_METAL(t, f) f
 #endif
 
 
@@ -217,18 +226,20 @@ typedef const char* rmtPStr;
 // Handle to the main remotery instance
 typedef struct Remotery Remotery;
 
-
 // All possible error codes
+// clang-format off
 typedef enum rmtError
 {
     RMT_ERROR_NONE,
     RMT_ERROR_RECURSIVE_SAMPLE,                 // Not an error but an internal message to calling code
+    RMT_ERROR_UNKNOWN,                          // An error with a message yet to be defined, only for internal error handling
 
     // System errors
     RMT_ERROR_MALLOC_FAIL,                      // Malloc call within remotery failed
     RMT_ERROR_TLS_ALLOC_FAIL,                   // Attempt to allocate thread local storage failed
     RMT_ERROR_VIRTUAL_MEMORY_BUFFER_FAIL,       // Failed to create a virtual memory mirror buffer
     RMT_ERROR_CREATE_THREAD_FAIL,               // Failed to create a thread for the server
+    RMT_ERROR_OPEN_THREAD_HANDLE_FAIL,          // Failed to open a thread handle, given a thread id
 
     // Network TCP/IP socket errors
     RMT_ERROR_SOCKET_INIT_NETWORK_FAIL,         // Network initialisation failure (e.g. on Win32, WSAStartup fails)
@@ -281,7 +292,7 @@ typedef enum rmtError
 
     RMT_ERROR_CUDA_UNKNOWN,
 } rmtError;
-
+// clang-format on
 
 typedef enum rmtSampleFlags
 {
@@ -393,7 +404,7 @@ typedef struct rmtSettings
     // Context pointer that gets sent to Remotery console callback function
     void* input_handler_context;
 
-    rmtPStr logFilename;
+    rmtPStr logPath;
 } rmtSettings;
 
 
@@ -606,39 +617,39 @@ struct rmt_EndMetalSampleOnScopeExit
 extern "C" {
 #endif
 
-RMT_API rmtSettings* _rmt_Settings( void );
-RMT_API enum rmtError _rmt_CreateGlobalInstance(Remotery** remotery);
-RMT_API void _rmt_DestroyGlobalInstance(Remotery* remotery);
-RMT_API void _rmt_SetGlobalInstance(Remotery* remotery);
-RMT_API Remotery* _rmt_GetGlobalInstance(void);
-RMT_API void _rmt_SetCurrentThreadName(rmtPStr thread_name);
-RMT_API void _rmt_LogText(rmtPStr text);
-RMT_API void _rmt_BeginCPUSample(rmtPStr name, rmtU32 flags, rmtU32* hash_cache);
-RMT_API void _rmt_EndCPUSample(void);
+    RMT_API rmtSettings* _rmt_Settings(void);
+    RMT_API enum rmtError _rmt_CreateGlobalInstance(Remotery** remotery);
+    RMT_API void _rmt_DestroyGlobalInstance(Remotery* remotery);
+    RMT_API void _rmt_SetGlobalInstance(Remotery* remotery);
+    RMT_API Remotery* _rmt_GetGlobalInstance(void);
+    RMT_API void _rmt_SetCurrentThreadName(rmtPStr thread_name);
+    RMT_API void _rmt_LogText(rmtPStr text);
+    RMT_API void _rmt_BeginCPUSample(rmtPStr name, rmtU32 flags, rmtU32* hash_cache);
+    RMT_API void _rmt_EndCPUSample(void);
 
 #if RMT_USE_CUDA
-RMT_API void _rmt_BindCUDA(const rmtCUDABind* bind);
-RMT_API void _rmt_BeginCUDASample(rmtPStr name, rmtU32* hash_cache, void* stream);
-RMT_API void _rmt_EndCUDASample(void* stream);
+    RMT_API void _rmt_BindCUDA(const rmtCUDABind* bind);
+    RMT_API void _rmt_BeginCUDASample(rmtPStr name, rmtU32* hash_cache, void* stream);
+    RMT_API void _rmt_EndCUDASample(void* stream);
 #endif
 
 #if RMT_USE_D3D11
-RMT_API void _rmt_BindD3D11(void* device, void* context);
-RMT_API void _rmt_UnbindD3D11(void);
-RMT_API void _rmt_BeginD3D11Sample(rmtPStr name, rmtU32* hash_cache);
-RMT_API void _rmt_EndD3D11Sample(void);
+    RMT_API void _rmt_BindD3D11(void* device, void* context);
+    RMT_API void _rmt_UnbindD3D11(void);
+    RMT_API void _rmt_BeginD3D11Sample(rmtPStr name, rmtU32* hash_cache);
+    RMT_API void _rmt_EndD3D11Sample(void);
 #endif
 
 #if RMT_USE_OPENGL
-RMT_API void _rmt_BindOpenGL();
-RMT_API void _rmt_UnbindOpenGL(void);
-RMT_API void _rmt_BeginOpenGLSample(rmtPStr name, rmtU32* hash_cache);
-RMT_API void _rmt_EndOpenGLSample(void);
+    RMT_API void _rmt_BindOpenGL();
+    RMT_API void _rmt_UnbindOpenGL(void);
+    RMT_API void _rmt_BeginOpenGLSample(rmtPStr name, rmtU32* hash_cache);
+    RMT_API void _rmt_EndOpenGLSample(void);
 #endif
 
 #if RMT_USE_METAL
-RMT_API void _rmt_BeginMetalSample(rmtPStr name, rmtU32* hash_cache);
-RMT_API void _rmt_EndMetalSample(void);
+    RMT_API void _rmt_BeginMetalSample(rmtPStr name, rmtU32* hash_cache);
+    RMT_API void _rmt_EndMetalSample(void);
 #endif
 
 #ifdef __cplusplus
