@@ -18,26 +18,36 @@
 // Github: https://github.com/Celtoys/Remotery
 #include "Remotery/Remotery.h"
 #define IGNORE_REMOTERY_SHIT
-#define IGNORE_DEBUG_OUT
-
-#ifndef IGNORE_DEBUG_OUT
+//#define IGNORE_DEBUG_OUT
 
 std::mutex mutex_console;
-#define DEBUG_OUT(MSG) { \
-mutex_console.lock(); \
-cout << MSG << "\n"; \
-mutex_console.unlock(); \
-}
+#ifndef IGNORE_DEBUG_OUT
+std::vector<std::string> categories = { "temp", "timing", "Warning" };
 #else
-#define DEBUG_OUT(MSG) {}
+std::vector<string> categories = {};
 #endif // !1
+
+
+#define DEBUG_OUT(MSG, CATEGORY) { \
+if(std::find(std::begin(categories), std::end(categories), CATEGORY) != std::end(categories)) { \
+        mutex_console.lock(); \
+        cout << MSG << "\n"; \
+        mutex_console.unlock(); \
+    } \
+}
 
 
 using namespace std;
 
+#ifndef IGNORE_REMOTERY_SHIT
+#define REMOTERY_SCOPE(NAME) {rmt_ScopedCPUSample(NAME, 0);}
+#else
+#define REMOTERY_SCOPE(NAME) {}
+#endif // !1
+
 #define MAKE_UPDATE_FUNC(NAME, DURATION) \
 	void Update##NAME() { \
-		rmt_ScopedCPUSample(NAME, 0); \
+		REMOTERY_SCOPE(NAME) \
 		auto start = chrono::high_resolution_clock::now(); \
 		decltype(start) end; \
 		do { \
@@ -56,7 +66,7 @@ MAKE_UPDATE_FUNC(Input, 200* GENERAL_SLOWDOWN) // no dependencies
 		MAKE_UPDATE_FUNC(GameElements, 2400 * GENERAL_SLOWDOWN) // depends on Physics
 				MAKE_UPDATE_FUNC(Rendering, 2000 * GENERAL_SLOWDOWN) // depends on Animation, Particles, GameElements
 MAKE_UPDATE_FUNC(Sound, 1000 * GENERAL_SLOWDOWN) // no dependencies
-// total 9200
+// 'max' 9200, min 5600 // wir haben noch 2 timing jobs drin
 
 void UpdateSerial()
 {
@@ -75,7 +85,12 @@ void UpdateSerial()
 
 
 
-
+void sleep(int microsec) {
+#ifndef IGNORE_REMOTERY_SHIT
+	rmt_ScopedCPUSample(sleep, 0);
+#endif // IGNORE_REMOTERY_SHIT
+	std::this_thread::sleep_for(chrono::microseconds(microsec));
+}
 
 
 
@@ -85,7 +100,7 @@ void UpdateSerial()
 
 #define MAX_DEPENDENCIES 8 // do we still use this?
 #define JOB_RESERVE 200 // max of UINT32_MAX-1
-#define THREAD_COUNT 20
+#define THREAD_COUNT 4
 
 #define MULTITHREADED
 
@@ -93,9 +108,12 @@ struct job {
 	//uint32_t id; // job_id
 	std::function<void(void)> functionToDo;
 	std::vector<uint32_t> dependencies; // job_ids
+	bool ísReady = false;
+	bool finished = false;
 };
 
 // our scheduler stuff:
+std::shared_mutex mutex_fullLock;
 
 std::shared_mutex mutex_allJobs;
 std::unordered_map<uint32_t, job> allJobs; // jobHandle -> struct (with own dipendencies)
@@ -112,15 +130,19 @@ uint32_t topJobID = 1;
 
 
 // an ID of Zero means BUG
-uint32_t CreateJob(std::function<void(void)> functionToDo, std::vector<uint32_t> dependencies) {
+uint32_t CreateJob(std::function<void(void)> functionToDo, std::vector<uint32_t> &dependencies) {
 
-	mutex_allJobs.lock_shared();
+	mutex_fullLock.lock(); // one thread only
+
+	mutex_allJobs.lock();// _shared();
 	if (allJobs.size() >= JOB_RESERVE) { // (Rlock)
-		mutex_allJobs.unlock_shared();
+		mutex_allJobs.unlock();// _shared();
+
+		mutex_fullLock.unlock();
 		return 0; // no space available
 	}
 	//cout << allJobs.size()+1 << "   " << JOB_RESERVE << "\n";
-	mutex_allJobs.unlock_shared();
+	mutex_allJobs.unlock();// _shared();
 
 	uint32_t id;
 	{ // Wlock[topJobID]
@@ -150,27 +172,40 @@ uint32_t CreateJob(std::function<void(void)> functionToDo, std::vector<uint32_t>
 		mutex_topJobID.unlock();
 	}
 
+
+	std::vector<uint32_t> dep;
+	dep.reserve(8);
 	// add to all jobs
-	{
-		mutex_allJobs.lock();
 
-		allJobs[id] = job{ functionToDo,dependencies }; // Wlock
-
-		mutex_allJobs.unlock();
+	mutex_allJobs.lock();
+	for (uint32_t depI : dependencies) {
+		if (allJobs.find(depI) != allJobs.end()) {
+			dep.push_back(depI);
+		}
 	}
+	dep.shrink_to_fit();
 
-	if (dependencies.size() != 0) { // highly likely we have a dependency
+	DEBUG_OUT(id << " <new "<< dep.size(),"debug");
+	
+
+	allJobs[id] = job{ functionToDo,dep }; // Wlock
+
+
+	if (dep.size() != 0) { // highly likely we have a dependency
 
 		mutex_scheduledJobs_waiting.lock();
 
-		for (uint32_t dependantID : dependencies) {
+		for (uint32_t dependantID : dep) {
 			// scheduledJobs_waiting[dependantID] creates a new element if needed!!!
-			scheduledJobs_waiting[dependantID].push_back(id); // Wlock
+			if (allJobs.find(dependantID) != allJobs.end())
+				scheduledJobs_waiting[dependantID].push_back(id); // Wlock
 		}
 
 		mutex_scheduledJobs_waiting.unlock();
+		mutex_allJobs.unlock();
 	}
 	else {
+		mutex_allJobs.unlock();
 		mutex_scheduledJobs_ready.lock();
 
 		scheduledJobs_ready.push(id); // Wlock
@@ -178,6 +213,7 @@ uint32_t CreateJob(std::function<void(void)> functionToDo, std::vector<uint32_t>
 		mutex_scheduledJobs_ready.unlock();
 	}
 
+	mutex_fullLock.unlock();
 	return id;
 }
 
@@ -191,9 +227,16 @@ void WorkerMainLoop() {
 	while (true) { // #TODO - get a life
 #endif // MULTITHREADED
 
-		//cout << std::this_thread::get_id() << "_1\n";
-
-		mutex_scheduledJobs_ready.lock();
+		//std::this_thread::sleep_for(chrono::microseconds(10000));
+		/*
+		if (!mutex_scheduledJobs_ready.try_lock()) {
+			sleep(10000);
+			//cout << std::this_thread::get_id() << " !!!!! "<< (allJobs.size()>= JOB_RESERVE)<< "|" << scheduledJobs_ready.size() << "\n";
+			return;
+		}
+		*/
+		mutex_scheduledJobs_ready.lock(); // Wlock
+		//cout << "jobs ready: " << scheduledJobs_ready.size() << "\n";
 		if (!scheduledJobs_ready.empty()) { // (Rlock)
 
 			// get a job
@@ -203,23 +246,27 @@ void WorkerMainLoop() {
 				jobID = scheduledJobs_ready.front(); // Rlock
 				scheduledJobs_ready.pop(); // Wlock
 
-				mutex_scheduledJobs_ready.unlock();
-				DEBUG_OUT(std::this_thread::get_id() << " - " << jobID);
+				mutex_scheduledJobs_ready.unlock(); // Rlock
+				//DEBUG_OUT(std::this_thread::get_id() << " - " << jobID);
 			}
 			{
 				mutex_allJobs.lock_shared();
 				j = allJobs[jobID]; // Rlock
-				// allJobs.erase(jobID);
+				//allJobs.erase(jobID); // Wlock
 				mutex_allJobs.unlock_shared();
 			}
 
 			//cout << std::this_thread::get_id() << "_2\n";
 			// do job
 			j.functionToDo();
+			j.finished = true;
+
+			DEBUG_OUT(jobID << " fin1", "debug");
 
 			//cout << std::this_thread::get_id() << "_3\n";
 			// tell that you finished
 			FinishJob(jobID);
+			DEBUG_OUT(jobID << " fin2", "debug");
 
 			//cout << std::this_thread::get_id() << "_4\n";
 			// now -> repeat
@@ -230,7 +277,7 @@ void WorkerMainLoop() {
 
 #ifdef MULTITHREADED
 
-			//std::this_thread::sleep_for(chrono::microseconds(1000)); 
+			//std::this_thread::sleep_for(chrono::microseconds(1000000)); 
 			std::this_thread::yield();// yield seems to be broken on my PC
 #else
 			break;
@@ -244,20 +291,26 @@ void WorkerMainLoop() {
 
 void FinishJob(uint32_t jobID) {
 
+	mutex_fullLock.lock(); // one thread only
 	std::vector<uint32_t> waitingOnMe;
 
-	mutex_scheduledJobs_waiting.lock_shared();
+	mutex_scheduledJobs_waiting.lock();// _shared();
 	if (scheduledJobs_waiting.find(jobID) != scheduledJobs_waiting.end()) {
-		waitingOnMe = scheduledJobs_waiting[jobID]; // Rlock
-		mutex_scheduledJobs_waiting.unlock_shared();
+		waitingOnMe = std::vector<uint32_t>(scheduledJobs_waiting[jobID]); // Rlock
+		mutex_scheduledJobs_waiting.unlock();// _shared();
 	}
 	else {
-		mutex_scheduledJobs_waiting.unlock_shared();
 
+		DEBUG_OUT(jobID << "|1" << "-:-", "debug");
 		mutex_allJobs.lock();
+		//cout << allJobs.size() << " 0> ";
 		allJobs.erase(jobID); // Wlock - muss existieren
+		//cout << allJobs.size() << "\n";
 		mutex_allJobs.unlock();
+		DEBUG_OUT(jobID << "|2" << "-:-", "debug");
+		mutex_scheduledJobs_waiting.unlock();// _shared();
 
+		mutex_fullLock.unlock();
 		return;
 	}
 
@@ -265,19 +318,37 @@ void FinishJob(uint32_t jobID) {
 	for (uint32_t id : waitingOnMe) {
 		uint32_t hasDependencies = 0;
 
-		mutex_allJobs.lock_shared();
+		/*
+		while (!mutex_allJobs.try_lock()) {
+			//cout << jobID << " Hello!\n";
+			sleep(100);
+		}*/
+		mutex_allJobs.lock();// _shared();
+
+		if (allJobs.find(id) == allJobs.end()) {
+			continue;
+		}
 		for (uint8_t i = 0; i < allJobs[id].dependencies.size(); i++) { // Rlock
 			if (allJobs[id].dependencies[i] == jobID) { // Rlock
 				allJobs[id].dependencies[i] = 0; // Rlock
 			}
 			hasDependencies |= allJobs[id].dependencies[i]; // Rlock
 		}
-		mutex_allJobs.unlock_shared();
+		DEBUG_OUT(jobID << "|" << id << ":" << hasDependencies, "debug");
+		mutex_allJobs.unlock();// _shared();
 
 		if (!hasDependencies) {
 			mutex_scheduledJobs_ready.lock();
 			scheduledJobs_ready.push(id); // Wlock
 			mutex_scheduledJobs_ready.unlock();
+
+			mutex_allJobs.lock();
+			if (allJobs.find(id) != allJobs.end())
+				allJobs[id].ísReady = true;
+			else {
+				DEBUG_OUT("NOOOOOOOOOOOOOO", "debug");
+			}
+			mutex_allJobs.unlock();
 		}
 	}
 
@@ -287,11 +358,14 @@ void FinishJob(uint32_t jobID) {
 		mutex_scheduledJobs_waiting.unlock();
 	}
 
-	{
+	{ 
 		mutex_allJobs.lock();
+		//cout << allJobs.size() << " 1> ";
 		allJobs.erase(jobID); // Wlock
+		//cout << allJobs.size() << "\n";
 		mutex_allJobs.unlock();
 	}
+	mutex_fullLock.unlock();
 }
 
 std::mutex mutex_timing;
@@ -337,8 +411,7 @@ void UpdateParallel(atomic<bool> &isRunning)
 			frame_floatingAverage *= 9;
 			frame_floatingAverage += (frame / 10);
 			frame_last = chrono::high_resolution_clock::now();
-			DEBUG_OUT(frame_floatingAverage << " | " << frame);
-			cout << frame_floatingAverage << " | " << frame << "\n";
+			DEBUG_OUT(frame_floatingAverage << " | " << frame, "timing");
 		}
 		else {
 			frame_last = chrono::high_resolution_clock::now();
@@ -350,9 +423,12 @@ void UpdateParallel(atomic<bool> &isRunning)
 		duration_floatingAverage *= 9;
 		duration_floatingAverage += (duration / 10);
 
-		DEBUG_OUT(duration_floatingAverage << " | " << duration);
-		//cout << duration_floatingAverage << " | " << duration << "\n";
+		DEBUG_OUT(duration_floatingAverage << " | " << duration, "timing");
 		mutex_timing.unlock();
+
+		mutex_allJobs.lock();
+		DEBUG_OUT(allJobs.size(), "temp");
+		mutex_allJobs.unlock();
 
 		delete timeStart; } };
 	std::vector<uint32_t> jobDependencies[10] = { {}, {0}, {1}, {2}, {3}, {3}, {2}, {4,5,6}, {0}, {1,7,8} };
@@ -369,9 +445,9 @@ void UpdateParallel(atomic<bool> &isRunning)
 			if (jobIDs[i] != 0) {
 				break;
 			}
-			DEBUG_OUT("jobQueue full!!!");
-			//std::this_thread::yield();
-			std::this_thread::sleep_for(chrono::microseconds(100));
+			DEBUG_OUT( "allJobs full!!! " << scheduledJobs_ready.size()<<","<< scheduledJobs_waiting.size() , "Warning");
+			std::this_thread::yield();
+			//sleep(100000);
 		}
 	}
 
@@ -424,7 +500,7 @@ int main()
 	{
 		while (isRunning) {
 			UpdateParallel(isRunning);
-			std::this_thread::sleep_for(chrono::microseconds(1000));
+			sleep(1);//5000, 10
 			//std::this_thread::sleep_for(chrono::microseconds(0));
 		}
 
@@ -441,7 +517,7 @@ int main()
 	}
 #endif // MULTITHREADED
 
-	cout << allJobs.size();
+	//cout << allJobs.size();
 	cout << "Type anything to quit...\n";
 	char c;
 	cin >> c;
@@ -459,17 +535,9 @@ int main()
 	}
 
 	cout << "Finished!!!\n";
+	cout << "Tried "<< topJobID << " Jobs.\n";
 
 #ifndef IGNORE_REMOTERY_SHIT
 	rmt_DestroyGlobalInstance(rmt);
 #endif // !IGNORE_REMOTERY_SHIT
 }
-
-/* TODO
-- thread this shit & synch it
-
-
-
-
-- delete this
-*/
