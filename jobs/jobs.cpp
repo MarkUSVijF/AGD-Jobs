@@ -29,7 +29,7 @@
 #define MULTITHREADED
 
 #define DEBUG_CATEGORIES { "temp", "timing", "_Warning" }
-#define RUN_TIMERS
+//#define RUN_TIMERS
 
 
 //#####################################################################################################################
@@ -508,11 +508,12 @@ int main()
 #endif // !IGNORE_REMOTERY_SHIT
 
 
-	atomic<bool> isRunning = true;
-
+	atomic<bool> isRunning = false;  // set later to send start signal
 
 	thread serial([&isRunning]()
 	{
+		while (!isRunning)
+			std::this_thread::yield(); // wait on start signal
 		while (isRunning)
 			Serial::Update(isRunning);
 	});
@@ -530,9 +531,11 @@ int main()
 
 	thread parallel([&isRunning]()
 	{
+		while (!isRunning)
+			std::this_thread::yield(); // wait on start signal
 		while (isRunning) {
 			Parallel::Update(isRunning);
-			sleep(1);//5000, 10
+			//sleep(1);//5000, 10
 			//std::this_thread::sleep_for(chrono::microseconds(0));
 		}
 
@@ -543,33 +546,46 @@ int main()
 	for (int i = 0; i < THREAD_COUNT; i++) {
 		workers[i] = new thread([&isRunning]()
 		{
+			while (!isRunning)
+				std::this_thread::yield(); // wait on start signal
 			while (isRunning)
 				Scheduler::Worker::Run();
 		});
 	}
 #endif // MULTITHREADED
 
+	// ##### SEND START SIGNAL #####
+	isRunning = true;
+	chrono::steady_clock::time_point startTime = chrono::high_resolution_clock::now();
+
 	//cout << allJobs.size();
 	cout << "Type anything to quit...\n";
 	char c;
 	cin >> c;
-	cout << "Quitting...\n";
+	cout << "Quitting...\n\n";
 	isRunning = false;
 
 	serial.join();
-	cout << "serial\n";
+	cout << "serial - joined\n";
 	parallel.join();
-	cout << "parallel\n";
+	cout << "parallel - joined\n";
 
 #ifdef MULTITHREADED
 	for (int i = 0; i < THREAD_COUNT; i++) {
 		workers[i]->join();
-		cout << "workers" << i << "\n";
+		cout << "workers_" << i << " - joined\n";
 	}
 #endif // MULTITHREADED
 
-	cout << "Finished!!!\n";
-	cout << "Tried " << Scheduler::topJobID << " Jobs.\n";
+	cout << "\nFinished!!!\n";
+#ifdef MULTITHREADED
+	cout << "Serial Jobs:   " << Serial::loops*8 << "\n";
+	cout << "Parallel Jobs: " << Scheduler::topJobID - Scheduler::allJobs.size() << "\n";
+#else
+	cout << "Serial Jobs:     " << Serial::loops * 8 << "\n";
+	cout << "'Parallel' Jobs: " << Scheduler::topJobID - Scheduler::allJobs.size() << "\n";
+#endif // MULTITHREADED
+	cout << "during " << (chrono::duration_cast<chrono::microseconds>(chrono::high_resolution_clock::now() - startTime).count()) << " MicroSeconds.\n";
 
 #ifndef IGNORE_REMOTERY_SHIT
 	rmt_DestroyGlobalInstance(rmt);
