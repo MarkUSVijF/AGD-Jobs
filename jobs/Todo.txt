@@ -6,7 +6,7 @@
 - if possible remove mutex_fullLock
 - redo scheduler data struct
 
-- turn scheduler & worker into clases?
+- job stealing? bzw multi job
 
 - this is how it works < constanze?
 
