@@ -9,6 +9,7 @@
 
 /*
  * Please add your names and UIDs in the form: Name <uid>, ...
+ * Simeon Quant <gs19m016>, Florian Bekker <gs19m009>, Constanze Ellmauer <gs19m008>
  */
 
  // Remotery is a easy to use profiler that can help you with seeing execution order and measuring data for your implementation
@@ -22,13 +23,12 @@
 
 #define IGNORE_REMOTERY_SHIT
 
-#define MAX_DEPENDENCIES 8 // do we still use this?
-#define JOB_RESERVE 200 // max of UINT32_MAX-1
-#define THREAD_COUNT 4
+#define JOB_RESERVE 80 // technicly max of UINT32_MAX-1 | we couldn't test becouse I don't have that much memory ^^
+#define THREAD_COUNT 9
 
-#define MULTITHREADED
+#define MULTITHREADED // if not MULTITHREADED, JOB_RESERVE has to be >= jobs in one cycle
 
-#define DEBUG_CATEGORIES { "temp", "timing", "_Warning" }
+//#define DEBUG_CATEGORIES { "temp", "timing", "Warning" }
 //#define RUN_TIMERS
 
 
@@ -119,7 +119,7 @@ namespace Scheduler {
 	std::unordered_map<uint32_t, std::vector<uint32_t>> jobsWaiting; // job -> jobs waiting on it
 
 
-	uint32_t CreateJob(std::function<void(void)> functionToDo, std::vector<uint32_t>& dependencies) {
+	uint32_t CreateJob(std::function<void(void)> functionToDo, std::vector<uint32_t> dependencies) {
 
 		mutex_fullLock.lock(); // one thread only
 
@@ -162,29 +162,25 @@ namespace Scheduler {
 		}
 
 
-		std::vector<uint32_t> dep;
-		dep.reserve(8);
 		// add to all jobs
 
 		mutex_allJobs.lock();
-		for (uint32_t depI : dependencies) {
-			if (allJobs.find(depI) != allJobs.end()) {
-				dep.push_back(depI);
+
+		uint32_t hasDependencies = 0;
+		for (int i = 0; i < dependencies.size(); i++) {
+			if (allJobs.find(dependencies[i]) == allJobs.end()) {
+				dependencies[i] = 0;
 			}
+			hasDependencies |= dependencies[i];
 		}
-		dep.shrink_to_fit();
-
-		DEBUG_OUT(id << " <new " << dep.size(), "debug");
+		allJobs[id] = job{ functionToDo,dependencies }; // Wlock
 
 
-		allJobs[id] = job{ functionToDo,dep }; // Wlock
-
-
-		if (dep.size() != 0) { // highly likely we have a dependency
+		if (hasDependencies) { // highly likely we have a dependency
 
 			mutex_jobsWaiting.lock();
 
-			for (uint32_t dependantID : dep) {
+			for (uint32_t dependantID : dependencies) {
 				// scheduledJobs_waiting[dependantID] creates a new element if needed!!!
 				if (allJobs.find(dependantID) != allJobs.end())
 					jobsWaiting[dependantID].push_back(id); // Wlock
@@ -393,8 +389,8 @@ namespace Parallel {
 #ifdef RUN_TIMERS
 	std::mutex mutex_timing;
 	long long duration_floatingAverage = 0;
-	long long frame_floatingAverage = 0;
-	chrono::steady_clock::time_point frame_last;
+	long long cycle_floatingAverage = 0;
+	chrono::steady_clock::time_point cycle_last;
 #endif // RUN_TIMERS
 
 	void Update(atomic<bool>& isRunning)
@@ -413,19 +409,19 @@ namespace Parallel {
 			mutex_timing.unlock();
 		};
 		std::function<void(void)> timerFunction_end = [timeStart] {
-			// how long this 'frame' took - frames can be intersecting if added faster than finished
+			// how long this 'cycle' took - cycles can be intersecting if added faster than finished
 			mutex_timing.lock();
-			if (frame_floatingAverage != 0) {
-				long long frame = (chrono::duration_cast<chrono::microseconds>(chrono::high_resolution_clock::now() - frame_last).count());
-				frame_floatingAverage /= 10;
-				frame_floatingAverage *= 9;
-				frame_floatingAverage += (frame / 10);
-				frame_last = chrono::high_resolution_clock::now();
-				DEBUG_OUT(frame_floatingAverage << " |- " << frame, "timing");
+			if (cycle_floatingAverage != 0) {
+				long long cycle = (chrono::duration_cast<chrono::microseconds>(chrono::high_resolution_clock::now() - cycle_last).count());
+				cycle_floatingAverage /= 10;
+				cycle_floatingAverage *= 9;
+				cycle_floatingAverage += (cycle / 10);
+				cycle_last = chrono::high_resolution_clock::now();
+				DEBUG_OUT(cycle_floatingAverage << " |- " << cycle, "timing");
 			}
 			else {
-				frame_last = chrono::high_resolution_clock::now();
-				frame_floatingAverage = 1;
+				cycle_last = chrono::high_resolution_clock::now();
+				cycle_floatingAverage = 1;
 			}
 
 			long long duration = (chrono::duration_cast<chrono::microseconds>(chrono::high_resolution_clock::now() - *timeStart).count());

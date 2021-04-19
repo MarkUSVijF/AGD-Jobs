@@ -1,47 +1,38 @@
 
 /* TODO
-- add student UIDs
 
 - thread this shit & synch it - done?
-- redo data struct (116-128)
-- if possible remove mutex_fullLock (116)
+    - maybe better?
+- if possible remove mutex_fullLock
+- redo scheduler data struct
 
+- turn scheduler & worker into clases?
 
-- test edge cases [JOB_RESERVE = UINT32_MAX-1] (102)
+- this is how it works < constanze?
 
-- remove isReady & finish from job (111-112)
 - beatify tihs SHT <3
+    - maybe better?
 - delete this
 */
 
 
 /*
 # AGD-Jobs
-Facts
-- Can be done in groups (max. 3 students), add your name and UID to the assignment files
-- The basic assignment grants 40 pts (bonus points for additional features and work)
-- No third-party libraries, jobsystems or threadpools (winapi and std allowed)
-
 Assignment
-- Implement a scheduler based jobsystem as it was presented in the lecture
-- Has to run on multiple threads
-- Implement a dependency-management process for jobs (not presented in the lecture, but information found in the "additional reading" sections of the slides)
-    - Jobs need to be able to specify dependencies and only execute after the dependencies were done
 - Make sure to use proper synchronization primitives, avoid race conditions, deadlocks and other common multithreading pitfalls
+    - maybe better?
 - Stick to C++ guidelines and produce clean and readable code (simple is often better)
+    - maybe better?
 
 Hand-in
 - The solution file with your jobsystem implementation, please don't submit any unnecessary or unused files
-- A short, written executive summary how your jobsystem implementation works and what features it supports (.pdf, .md, .txt or documentation in the source files) - max. 1 A4 page if .pdf
+- !!! A short, written executive summary how your jobsystem implementation works and what features it supports (.pdf, .md, .txt or documentation in the source files) - max. 1 A4 page if .pdf
 
 Bonus points
-The basic, correct assignment will grant you 40 pts. 
-If you want to get additional points (directly added to the final grade) each of the following features will grant you additional points:
 -Implement the work-stealing algorithm (+10pts)
--Implement the work-stealing queue with lock-free mechanisms (+5pts, please really only try this if you feel confident and have an already working solution, definitely DON’T go for this as your first implementation)
--Configuration possibilities of dependencies & worker thread count (+2.5pts)
+    - maybe?
 -Automatic discovery of supported ideal thread count (+2.5pts, number of cores/HW threads + 1)
-For errors in the bonus implementations partial points will be granted of course if most of the implementation is correct
+    - maybe?
 
 Negative points
 Points can be subtracted for:
