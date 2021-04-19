@@ -24,9 +24,32 @@
 #define IGNORE_REMOTERY_SHIT
 
 #define JOB_RESERVE 80 // technicly max of UINT32_MAX-1 | we couldn't test becouse I don't have that much memory ^^
-#define THREAD_COUNT 9
+					   // 80 was enough for us
+#define THREAD_COUNT 9 // PC Bekker
 
-#define MULTITHREADED // if not MULTITHREADED, JOB_RESERVE has to be >= jobs in one cycle
+/*
+	TestRuns ~20 sec:
+
+	Serial -  17696|20382374
+
+	  8| 4 -  67134|20248569
+	  8| 9 -  82939|20087758
+	  8|20 -  84070|20318100
+
+	 80| 4 -  70901|20454117
+	 80| 9 - 132552|20567959
+	 80|20 - 131913|20404730
+
+	500| 4 -  71256|20533508
+	500| 9 - 135996|20620797
+	500|20 - 138877|20809966
+*/
+
+
+#define MULTITHREADED				// if not MULTITHREADED, JOB_RESERVE has to be >= jobs in one cycle
+									// shows, with START_SERIAL_CAMPARISON, how much overhead our system has
+//#define START_SERIAL_CAMPARISON	// to run the serial thread (for comparison)
+//#define DISABLE_PARALLEL			// disable the parallel thread & all workers to only see serial (if enabled)
 
 //#define DEBUG_CATEGORIES { "temp", "timing", "Warning" }
 //#define RUN_TIMERS
@@ -506,6 +529,7 @@ int main()
 
 	atomic<bool> isRunning = false;  // set later to send start signal
 
+#ifdef START_SERIAL_CAMPARISON
 	thread serial([&isRunning]()
 	{
 		while (!isRunning)
@@ -513,6 +537,7 @@ int main()
 		while (isRunning)
 			Serial::Update(isRunning);
 	});
+#endif // START_SERIAL_CAMPARISON
 
 	// our scheduler
 	/*
@@ -525,6 +550,7 @@ int main()
 	});
 	*/
 
+#ifndef DISABLE_PARALLEL
 	thread parallel([&isRunning]()
 	{
 		while (!isRunning)
@@ -549,6 +575,7 @@ int main()
 		});
 	}
 #endif // MULTITHREADED
+#endif // !DISABLE_PARALLEL
 
 	// ##### SEND START SIGNAL #####
 	isRunning = true;
@@ -561,8 +588,11 @@ int main()
 	cout << "Quitting...\n\n";
 	isRunning = false;
 
+#ifdef START_SERIAL_CAMPARISON
 	serial.join();
 	cout << "serial - joined\n";
+#endif // START_SERIAL_CAMPARISON
+#ifndef DISABLE_PARALLEL
 	parallel.join();
 	cout << "parallel - joined\n";
 
@@ -572,14 +602,15 @@ int main()
 		cout << "workers_" << i << " - joined\n";
 	}
 #endif // MULTITHREADED
+#endif // !DISABLE_PARALLEL
 
 	cout << "\nFinished!!!\n";
 #ifdef MULTITHREADED
 	cout << "Serial Jobs:   " << Serial::loops*8 << "\n";
-	cout << "Parallel Jobs: " << Scheduler::topJobID - Scheduler::allJobs.size() << "\n";
+	cout << "Parallel Jobs: " << Scheduler::topJobID - Scheduler::allJobs.size() - 1 << "\n";
 #else
 	cout << "Serial Jobs:     " << Serial::loops * 8 << "\n";
-	cout << "'Parallel' Jobs: " << Scheduler::topJobID - Scheduler::allJobs.size() << "\n";
+	cout << "'Parallel' Jobs: " << Scheduler::topJobID - Scheduler::allJobs.size() - 1 << "\n";
 #endif // MULTITHREADED
 	cout << "during " << (chrono::duration_cast<chrono::microseconds>(chrono::high_resolution_clock::now() - startTime).count()) << " MicroSeconds.\n";
 
