@@ -69,7 +69,7 @@ if(std::find(std::begin(DEBUG_CATEGORIES), std::end(DEBUG_CATEGORIES), CATEGORY)
     } \
 }
 #else // !DEBUG_CATEGORIES
-#define DEBUG_OUT(MSG, CATEGORY) {}
+#define DEBUG_OUT1(MSG, CATEGORY) {}
 #endif // DEBUG_CATEGORIES
 
 
@@ -118,7 +118,9 @@ void sleep(int microsec) {
 
 //#####################################################################################################################
 
-namespace Scheduler {
+class Scheduler {
+
+public:
 	struct job {
 		//uint32_t id; // job_id
 		std::function<void(void)> functionToDo;
@@ -126,6 +128,7 @@ namespace Scheduler {
 		//bool ísReady = false;
 		//bool finished = false;
 	};
+private:
 	// our scheduler stuff:
 	std::shared_mutex mutex_fullLock;
 
@@ -141,6 +144,21 @@ namespace Scheduler {
 	std::shared_mutex mutex_jobsWaiting;
 	std::unordered_map<uint32_t, std::vector<uint32_t>> jobsWaiting; // job -> jobs waiting on it
 
+public:
+	Scheduler() {
+		allJobs.reserve(JOB_RESERVE);
+	}
+
+	uint32_t JobsDone() {
+		mutex_topJobID.lock();
+		uint32_t v = topJobID;
+		mutex_topJobID.unlock();
+
+		mutex_allJobs.lock();
+		v -= static_cast<uint32_t>(allJobs.size()) - 1;
+		mutex_allJobs.unlock();
+		return v;
+	}
 
 	uint32_t CreateJob(std::function<void(void)> functionToDo, std::vector<uint32_t> dependencies) {
 
@@ -275,13 +293,13 @@ namespace Scheduler {
 		}
 		else {
 
-			DEBUG_OUT(jobID << "|1" << "-:-", "debug");
+			DEBUG_OUT1(jobID << "|1" << "-:-", "debug");
 			mutex_allJobs.lock();
 			//cout << allJobs.size() << " 0> ";
 			allJobs.erase(jobID); // Wlock - muss existieren
 			//cout << allJobs.size() << "\n";
 			mutex_allJobs.unlock();
-			DEBUG_OUT(jobID << "|2" << "-:-", "debug");
+			DEBUG_OUT1(jobID << "|2" << "-:-", "debug");
 			mutex_jobsWaiting.unlock();// _shared();
 
 			mutex_fullLock.unlock();
@@ -308,7 +326,7 @@ namespace Scheduler {
 				}
 				hasDependencies |= allJobs[id].dependencies[i]; // Rlock
 			}
-			DEBUG_OUT(jobID << "|" << id << ":" << hasDependencies, "debug");
+			DEBUG_OUT1(jobID << "|" << id << ":" << hasDependencies, "debug");
 			mutex_allJobs.unlock();// _shared();
 
 			if (!hasDependencies) {
@@ -342,37 +360,42 @@ namespace Scheduler {
 		}
 		mutex_fullLock.unlock();
 	}
+};
 
-	//#################################################################
+class Worker {
+public:
+	Scheduler* sc;
+	Worker(Scheduler* scheduler) {
+		sc = scheduler;
+	}
+	void Run() {
 
-	namespace Worker {
-		void Run() {
+		Scheduler::job j;
+		uint32_t jobID = sc->GetJob(j);
+		if (jobID != 0) {
 
-			job j;
-			uint32_t jobID = GetJob(j);
-			if (jobID != 0) {
+			//cout << std::this_thread::get_id() << "_2\n";
+			// do job
+			j.functionToDo();
+			//j.finished = true;
 
-				//cout << std::this_thread::get_id() << "_2\n";
-				// do job
-				j.functionToDo();
-				//j.finished = true;
+			DEBUG_OUT1(jobID << " fin1", "debug");
 
-				DEBUG_OUT(jobID << " fin1", "debug");
+			//cout << std::this_thread::get_id() << "_3\n";
+			// tell that you finished
+			sc->FinishJob(jobID);
+			DEBUG_OUT1(jobID << " fin2", "debug");
 
-				//cout << std::this_thread::get_id() << "_3\n";
-				// tell that you finished
-				FinishJob(jobID);
-				DEBUG_OUT(jobID << " fin2", "debug");
-
-				//cout << std::this_thread::get_id() << "_4\n";
-				// now -> repeat
-			}
-			else {
-				std::this_thread::yield();
-			}
+			//cout << std::this_thread::get_id() << "_4\n";
+			// now -> repeat
+		}
+		else {
+			std::this_thread::yield();
 		}
 	}
-}
+};
+
+Scheduler* scheduler;
 
 //#####################################################################################################################
 
@@ -490,11 +513,11 @@ namespace Parallel {
 				dependencies.push_back(jobIDs[pos]);
 			}
 			while (isRunning) {
-				jobIDs[i] = Scheduler::CreateJob(jobfunctions[i], dependencies);
+				jobIDs[i] = scheduler->CreateJob(jobfunctions[i], dependencies);
 				if (jobIDs[i] != 0) {
 					break;
 				}
-				DEBUG_OUT("allJobs full!!! " << Scheduler::jobsReady.size() << "," << Scheduler::jobsWaiting.size(), "Warning");
+				DEBUG_OUT1("allJobs full!!! " << Scheduler::jobsReady.size() << "," << Scheduler::jobsWaiting.size(), "Warning");
 				std::this_thread::yield();
 				//sleep(100000);
 			}
@@ -513,7 +536,8 @@ namespace Parallel {
 int main()
 {
 	// init stuff
-	Scheduler::allJobs.reserve(JOB_RESERVE);
+
+	scheduler = new Scheduler();
 	/*
 	 * This initializes remotery, you are not forced to use it (although it's helpful)
 	 * but please also don't remove it from here then. Because if you don't use it, I
@@ -568,10 +592,11 @@ int main()
 	for (int i = 0; i < THREAD_COUNT; i++) {
 		workers[i] = new thread([&isRunning]()
 		{
+			Worker w(scheduler);
 			while (!isRunning)
 				std::this_thread::yield(); // wait on start signal
 			while (isRunning)
-				Scheduler::Worker::Run();
+				w.Run();
 		});
 	}
 #endif // MULTITHREADED
@@ -607,10 +632,10 @@ int main()
 	cout << "\nFinished!!!\n";
 #ifdef MULTITHREADED
 	cout << "Serial Jobs:   " << Serial::loops*8 << "\n";
-	cout << "Parallel Jobs: " << Scheduler::topJobID - Scheduler::allJobs.size() - 1 << "\n";
+	cout << "Parallel Jobs: " << scheduler->JobsDone() << "\n";
 #else
 	cout << "Serial Jobs:     " << Serial::loops * 8 << "\n";
-	cout << "'Parallel' Jobs: " << Scheduler::topJobID - Scheduler::allJobs.size() - 1 << "\n";
+	cout << "'Parallel' Jobs: " << scheduler->JobsDone() << "\n";
 #endif // MULTITHREADED
 	cout << "during " << (chrono::duration_cast<chrono::microseconds>(chrono::high_resolution_clock::now() - startTime).count()) << " MicroSeconds.\n";
 
