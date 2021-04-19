@@ -23,9 +23,9 @@
 
 #define IGNORE_REMOTERY_SHIT
 
-#define JOB_RESERVE 80 // technicly max of UINT32_MAX-1 | we couldn't test becouse I don't have that much memory ^^
-					   // 80 was enough for us
-#define THREAD_COUNT 9 // PC Bekker
+#define JOB_RESERVE 80   // technicly max of UINT32_MAX-1 | we couldn't test becouse I don't have that much memory ^^
+					     // 80 was enough for us
+//#define THREAD_COUNT 4 // used to override auto detection
 
 /*
 	TestRuns ~20 sec:
@@ -51,25 +51,25 @@
 //#define START_SERIAL_CAMPARISON	// to run the serial thread (for comparison)
 //#define DISABLE_PARALLEL			// disable the parallel thread & all workers to only see serial (if enabled)
 
-//#define DEBUG_CATEGORIES { "temp", "timing", "Warning" }
-//#define RUN_TIMERS
-
 
 //#####################################################################################################################
 
 
 std::mutex mutex_console;
 
+//#define DEBUG_CATEGORIES { "temp", "timing", "Warning" }
+//#define RUN_TIMERS
+
 #ifdef DEBUG_CATEGORIES
 #define DEBUG_OUT(MSG, CATEGORY) { \
 if(std::find(std::begin(DEBUG_CATEGORIES), std::end(DEBUG_CATEGORIES), CATEGORY) != std::end(DEBUG_CATEGORIES)) { \
         mutex_console.lock(); \
-        cout << MSG << "\n"; \
+        std::cout << MSG << "\n"; \
         mutex_console.unlock(); \
     } \
 }
 #else // !DEBUG_CATEGORIES
-#define DEBUG_OUT1(MSG, CATEGORY) {}
+#define DEBUG_OUT(MSG, CATEGORY) {}
 #endif // DEBUG_CATEGORIES
 
 
@@ -106,15 +106,6 @@ MAKE_UPDATE_FUNC(GameElements, 2400 * GENERAL_SLOWDOWN) // depends on Physics(1)
 MAKE_UPDATE_FUNC(Rendering, 2000 * GENERAL_SLOWDOWN) // depends on Animation(3), Particles(4), GameElements(5)
 MAKE_UPDATE_FUNC(Sound, 1000 * GENERAL_SLOWDOWN) // no dependencies
 // 'max' 9200, min 5600 // wir haben noch 2 timing jobs drin
-
-//#####################################################################################################################
-
-void sleep(int microsec) {
-#ifndef IGNORE_REMOTERY_SHIT
-	rmt_ScopedCPUSample(sleep, 0);
-#endif // !IGNORE_REMOTERY_SHIT
-	std::this_thread::sleep_for(chrono::microseconds(microsec));
-}
 
 //#####################################################################################################################
 
@@ -161,6 +152,7 @@ public:
 	}
 
 	uint32_t CreateJob(std::function<void(void)> functionToDo, std::vector<uint32_t> dependencies) {
+		REMOTERY_SCOPE(CreateJob)
 
 		mutex_fullLock.lock(); // one thread only
 
@@ -171,7 +163,7 @@ public:
 			mutex_fullLock.unlock();
 			return 0; // no space available
 		}
-		//cout << allJobs.size()+1 << "   " << JOB_RESERVE << "\n";
+		//std::cout << allJobs.size()+1 << "   " << JOB_RESERVE << "\n";
 		mutex_allJobs.unlock();// _shared();
 
 		uint32_t id;
@@ -244,17 +236,18 @@ public:
 	}
 
 	uint32_t GetJob(job& job) {
+		REMOTERY_SCOPE(GetJob)
 
 		//std::this_thread::sleep_for(chrono::microseconds(10000));
 		/*
 		if (!mutex_scheduledJobs_ready.try_lock()) {
 			sleep(10000);
-			//cout << std::this_thread::get_id() << " !!!!! "<< (allJobs.size()>= JOB_RESERVE)<< "|" << scheduledJobs_ready.size() << "\n";
+			//std::cout << std::this_thread::get_id() << " !!!!! "<< (allJobs.size()>= JOB_RESERVE)<< "|" << scheduledJobs_ready.size() << "\n";
 			return;
 		}
 		*/
 		mutex_jobsReady.lock(); // Wlock
-		//cout << "jobs ready: " << scheduledJobs_ready.size() << "\n";
+		//std::cout << "jobs ready: " << scheduledJobs_ready.size() << "\n";
 		uint32_t jobID = 0;
 		if (!jobsReady.empty()) { // (Rlock)
 
@@ -282,6 +275,7 @@ public:
 	}
 
 	void FinishJob(uint32_t jobID) {
+		REMOTERY_SCOPE(FinishJob)
 
 		mutex_fullLock.lock(); // one thread only
 		std::vector<uint32_t> waitingOnMe;
@@ -293,13 +287,13 @@ public:
 		}
 		else {
 
-			DEBUG_OUT1(jobID << "|1" << "-:-", "debug");
+			DEBUG_OUT(jobID << "|1" << "-:-", "debug");
 			mutex_allJobs.lock();
-			//cout << allJobs.size() << " 0> ";
+			//std::cout << allJobs.size() << " 0> ";
 			allJobs.erase(jobID); // Wlock - muss existieren
-			//cout << allJobs.size() << "\n";
+			//std::cout << allJobs.size() << "\n";
 			mutex_allJobs.unlock();
-			DEBUG_OUT1(jobID << "|2" << "-:-", "debug");
+			DEBUG_OUT(jobID << "|2" << "-:-", "debug");
 			mutex_jobsWaiting.unlock();// _shared();
 
 			mutex_fullLock.unlock();
@@ -312,7 +306,7 @@ public:
 
 			/*
 			while (!mutex_allJobs.try_lock()) {
-				//cout << jobID << " Hello!\n";
+				//std::cout << jobID << " Hello!\n";
 				sleep(100);
 			}*/
 			mutex_allJobs.lock();// _shared();
@@ -326,7 +320,7 @@ public:
 				}
 				hasDependencies |= allJobs[id].dependencies[i]; // Rlock
 			}
-			DEBUG_OUT1(jobID << "|" << id << ":" << hasDependencies, "debug");
+			DEBUG_OUT(jobID << "|" << id << ":" << hasDependencies, "debug");
 			mutex_allJobs.unlock();// _shared();
 
 			if (!hasDependencies) {
@@ -353,9 +347,9 @@ public:
 
 		{
 			mutex_allJobs.lock();
-			//cout << allJobs.size() << " 1> ";
+			//std::cout << allJobs.size() << " 1> ";
 			allJobs.erase(jobID); // Wlock
-			//cout << allJobs.size() << "\n";
+			//std::cout << allJobs.size() << "\n";
 			mutex_allJobs.unlock();
 		}
 		mutex_fullLock.unlock();
@@ -374,19 +368,19 @@ public:
 		uint32_t jobID = sc->GetJob(j);
 		if (jobID != 0) {
 
-			//cout << std::this_thread::get_id() << "_2\n";
+			//std::cout << std::this_thread::get_id() << "_2\n";
 			// do job
 			j.functionToDo();
 			//j.finished = true;
 
-			DEBUG_OUT1(jobID << " fin1", "debug");
+			DEBUG_OUT(jobID << " fin1", "debug");
 
-			//cout << std::this_thread::get_id() << "_3\n";
+			//std::cout << std::this_thread::get_id() << "_3\n";
 			// tell that you finished
 			sc->FinishJob(jobID);
-			DEBUG_OUT1(jobID << " fin2", "debug");
+			DEBUG_OUT(jobID << " fin2", "debug");
 
-			//cout << std::this_thread::get_id() << "_4\n";
+			//std::cout << std::this_thread::get_id() << "_4\n";
 			// now -> repeat
 		}
 		else {
@@ -411,7 +405,7 @@ namespace Serial {
 		chrono::steady_clock::time_point timeStart = chrono::high_resolution_clock::now();
 #endif // RUN_TIMERS
 
-		rmt_ScopedCPUSample(Update, 0);
+		REMOTERY_SCOPE(Update)
 		UpdateInput();
 		UpdatePhysics();
 		UpdateCollision();
@@ -441,10 +435,8 @@ namespace Parallel {
 
 	void Update(atomic<bool>& isRunning)
 	{
-		//cout << "##";
-#ifndef IGNORE_REMOTERY_SHIT
-		rmt_ScopedCPUSample(UpdateParallel, 0);
-#endif // IGNORE_REMOTERY_SHIT
+		//std::cout << "##";
+		REMOTERY_SCOPE(Update)
 
 #ifdef RUN_TIMERS
 
@@ -517,7 +509,7 @@ namespace Parallel {
 				if (jobIDs[i] != 0) {
 					break;
 				}
-				DEBUG_OUT1("allJobs full!!! " << Scheduler::jobsReady.size() << "," << Scheduler::jobsWaiting.size(), "Warning");
+				DEBUG_OUT("allJobs full!!! " << Scheduler::jobsReady.size() << "," << Scheduler::jobsWaiting.size(), "Warning");
 				std::this_thread::yield();
 				//sleep(100000);
 			}
@@ -586,10 +578,11 @@ int main()
 		}
 
 	});
-
 #ifdef MULTITHREADED
-	thread* workers[THREAD_COUNT];
-	for (int i = 0; i < THREAD_COUNT; i++) {
+#ifdef THREAD_COUNT
+	const int threadCount = THREAD_COUNT;
+	thread* workers[threadCount];
+	for (int i = 0; i < threadCount; i++) {
 		workers[i] = new thread([&isRunning]()
 		{
 			Worker w(scheduler);
@@ -599,6 +592,20 @@ int main()
 				w.Run();
 		});
 	}
+#else
+	const int threadCount = std::thread::hardware_concurrency() + 1;
+	std::vector<thread*> workers;
+	for (int i = 0; i < threadCount; i++) {
+		workers.push_back(new thread([&isRunning]()
+		{
+			Worker w(scheduler);
+			while (!isRunning)
+				std::this_thread::yield(); // wait on start signal
+			while (isRunning)
+				w.Run();
+		}));
+	}
+#endif // THREAD_COUNT
 #endif // MULTITHREADED
 #endif // !DISABLE_PARALLEL
 
@@ -606,38 +613,40 @@ int main()
 	isRunning = true;
 	chrono::steady_clock::time_point startTime = chrono::high_resolution_clock::now();
 
-	//cout << allJobs.size();
-	cout << "Type anything to quit...\n";
+	//std::cout << allJobs.size();
+	std::cout << "Type anything to quit...\n";
 	char c;
 	cin >> c;
-	cout << "Quitting...\n\n";
+	std::cout << "Quitting...\n\n";
 	isRunning = false;
 
 #ifdef START_SERIAL_CAMPARISON
 	serial.join();
-	cout << "serial - joined\n";
+	std::cout << "serial - joined\n";
 #endif // START_SERIAL_CAMPARISON
+
 #ifndef DISABLE_PARALLEL
 	parallel.join();
-	cout << "parallel - joined\n";
-
+	std::cout << "parallel - joined\n";
 #ifdef MULTITHREADED
-	for (int i = 0; i < THREAD_COUNT; i++) {
+	for (int i = 0; i < threadCount; i++) {
 		workers[i]->join();
-		cout << "workers_" << i << " - joined\n";
+		std::cout << "workers_" << i << " - joined\n";
 	}
 #endif // MULTITHREADED
 #endif // !DISABLE_PARALLEL
 
-	cout << "\nFinished!!!\n";
+	std::cout << "\nFinished!!!\n";
+
 #ifdef MULTITHREADED
-	cout << "Serial Jobs:   " << Serial::loops*8 << "\n";
-	cout << "Parallel Jobs: " << scheduler->JobsDone() << "\n";
+	std::cout << "Serial Jobs:   " << Serial::loops*8 << "\n";
+	std::cout << "Parallel Jobs: " << scheduler->JobsDone() << "\n";
 #else
-	cout << "Serial Jobs:     " << Serial::loops * 8 << "\n";
-	cout << "'Parallel' Jobs: " << scheduler->JobsDone() << "\n";
+	std::cout << "Serial Jobs:     " << Serial::loops * 8 << "\n";
+	std::cout << "'Parallel' Jobs: " << scheduler->JobsDone() << "\n";
 #endif // MULTITHREADED
-	cout << "during " << (chrono::duration_cast<chrono::microseconds>(chrono::high_resolution_clock::now() - startTime).count()) << " MicroSeconds.\n";
+
+	std::cout << "during " << (chrono::duration_cast<chrono::microseconds>(chrono::high_resolution_clock::now() - startTime).count()) << " MicroSeconds.\n";
 
 #ifndef IGNORE_REMOTERY_SHIT
 	rmt_DestroyGlobalInstance(rmt);

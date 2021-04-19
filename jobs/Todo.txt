@@ -31,8 +31,6 @@ Hand-in
 Bonus points
 -Implement the work-stealing algorithm (+10pts)
     - maybe?
--Automatic discovery of supported ideal thread count (+2.5pts, number of cores/HW threads + 1)
-    - maybe?
 
 Negative points
 Points can be subtracted for:
